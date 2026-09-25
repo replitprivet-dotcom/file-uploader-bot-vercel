@@ -4,6 +4,7 @@
 
 const { waitUntil } = require('@vercel/functions');
 const crypto = require('crypto');
+const { GridFSBucket } = require('mongodb');
 const { getDb } = require('../lib/db');
 
 const config = require('../config');
@@ -254,31 +255,25 @@ async function uploadTemp(buffer, name, expire) {
   return m[1].replace(/^dl\//, '');
 }
 
-// Returns "<file>.<ext>" (catbox file name)
+// Store permanent files in MongoDB GridFS. Catbox's anonymous API is
+// currently unreliable from serverless/datacenter IPs, while GridFS keeps
+// the file under the same account and supports files larger than 16 MB.
 async function uploadPermanent(buffer, name) {
-  const form = new FormData();
-  form.append('reqtype', 'fileupload');
-  if (CATBOX_USERHASH) form.append('userhash', CATBOX_USERHASH);
-  form.append('fileToUpload', new Blob([buffer]), name);
-
-  // Catbox currently rejects requests without browser-like request headers
-  // with the response "Invalid uploader". This is not a file-type error.
-  const res = await fetch('https://catbox.moe/user/api.php', {
-    method: 'POST',
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; FileUploaderBot/1.0)',
-      Referer: 'https://catbox.moe/',
-      Origin: 'https://catbox.moe',
-    },
-    body: form,
+  const db = await getDb();
+  const bucket = new GridFSBucket(db, { bucketName: 'permanent_files' });
+  const contentType = String(name).toLowerCase().endsWith('.jpg') || String(name).toLowerCase().endsWith('.jpeg')
+    ? 'image/jpeg'
+    : String(name).toLowerCase().endsWith('.png')
+      ? 'image/png'
+      : 'application/octet-stream';
+  return new Promise((resolve, reject) => {
+    const stream = bucket.openUploadStream(name || 'file', {
+      metadata: { contentType, originalName: name || 'file' },
+    });
+    stream.on('error', reject);
+    stream.on('finish', () => resolve(`db:${stream.id.toString()}`));
+    stream.end(buffer);
   });
-  const text = (await res.text()).trim();
-  const m = text.match(/^https?:\/\/files\.catbox\.moe\/([A-Za-z0-9]+\.[A-Za-z0-9]+)$/);
-  if (!res.ok || !m) {
-    console.error('catbox response:', text.slice(0, 200));
-    throw new Error(`Permanent upload fail ho gaya: ${text.slice(0, 120) || 'Catbox ne response nahi diya'}`);
-  }
-  return m[1];
 }
 
 // ---------- Handlers ----------
@@ -385,7 +380,7 @@ async function handleCallback(q) {
         type: 'permanent',
         fileName: item.name,
         fileSize: item.size || buffer.length,
-        origin: `https://files.catbox.moe/${originPath}`,
+        origin: originPath,
       });
 
       await edit(`${E('success')} <b>Permanent upload ho gaya!</b>\n\n${fileInfo(item)}\n${uploaderInfo(q.from)}\n${E('permanent')} Kabhi delete nahi hoga\n\n${E('download')} <b>Download link:</b>\n${esc(proxyUrl)}`, {

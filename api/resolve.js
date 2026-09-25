@@ -7,6 +7,7 @@ const config = require('../config');
 
 const SECRET = config.PROXY_SECRET;
 const UA = 'Mozilla/5.0 (compatible; FileProxy/1.0)';
+const PUBLIC_URL = `https://${String(config.DOMAIN).replace(/^https?:\/\//, '').replace(/\/+$/, '')}`;
 
 // tmpfiles ka download token kuch minute mein expire hota hai, isliye har baar naya nikalte hain
 async function freshTempLink(pageUrl) {
@@ -37,7 +38,15 @@ module.exports = async (req, res) => {
 
     if (!doc || !doc.origin) return res.status(200).json({ status: 404 });
 
-    if (doc.type === 'permanent') return res.status(200).json({ status: 200, target: doc.origin });
+    if (doc.type === 'permanent') {
+      if (String(doc.origin).startsWith('db:')) {
+        return res.status(200).json({
+          status: 200,
+          target: `${PUBLIC_URL}/api/download?id=${encodeURIComponent(String(doc.origin).slice(3))}`,
+        });
+      }
+      return res.status(200).json({ status: 200, target: doc.origin });
+    }
 
     if (doc.expiresAt && new Date(doc.expiresAt).getTime() < Date.now()) {
       return res.status(200).json({ status: 410 });

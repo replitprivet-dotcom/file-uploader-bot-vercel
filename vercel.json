@@ -3,7 +3,8 @@
     "api/webhook.js": { "maxDuration": 60 }
   },
   "rewrites": [
-    { "source": "/", "destination": "/api/not-found" }
+    { "source": "/", "destination": "/api/not-found" },
+    { "source": "/app", "destination": "/app.html" }
   ],
   "crons": [
     { "path": "/api/setup", "schedule": "0 0 * * *" }

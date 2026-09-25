@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>File Manager</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,sans-serif}*{box-sizing:border-box}body{margin:0;background:#10131a;color:#f5f7fb;padding:20px 16px 32px}h1{font-size:24px;margin:4px 0 5px}.sub{color:#9ba5b5;margin:0 0 20px}.toolbar{display:flex;gap:10px;margin-bottom:16px}.button{border:0;border-radius:12px;padding:12px 15px;background:#2878f0;color:#fff;font-weight:700;cursor:pointer}.button.secondary{background:#202734}.card{background:#181e29;border:1px solid #2a3444;border-radius:16px;padding:15px;margin:10px 0}.row{display:flex;align-items:center;justify-content:space-between;gap:12px}.name{font-weight:700;overflow-wrap:anywhere}.meta{color:#9ba5b5;font-size:13px;margin-top:7px;line-height:1.5}.status{font-size:12px;font-weight:700;padding:5px 8px;border-radius:999px;white-space:nowrap}.live{color:#73e6a0;background:#153b2a}.dead{color:#ff9a9a;background:#472329}.link{display:block;color:#77b2ff;text-decoration:none;margin-top:10px;font-size:13px;overflow-wrap:anywhere}.empty,.error{text-align:center;color:#9ba5b5;padding:35px 10px}.spinner{color:#77b2ff;text-align:center;padding:35px}.hidden{display:none}
+  </style>
+</head>
+<body>
+  <h1>File Manager</h1>
+  <p class="sub">Your uploaded links and current status</p>
+  <div class="toolbar"><button class="button" id="upload">Upload a file</button><button class="button secondary" id="refresh">Refresh</button></div>
+  <div id="state" class="spinner">Loading your files...</div><div id="list"></div>
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+  const state = document.getElementById('state'), list = document.getElementById('list');
+  const fmtSize = (n) => { if (!n) return 'Unknown size'; const u=['B','KB','MB','GB']; let i=0; while(n>=1024&&i<3){n/=1024;i++} return `${n.toFixed(i?1:0)} ${u[i]}`; };
+  async function load() {
+    state.className='spinner'; state.textContent='Loading your files...'; list.innerHTML='';
+    try {
+      const r = await fetch('/api/app', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({initData:tg?.initData||''})});
+      const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Unable to load files');
+      state.className='hidden';
+      if (!data.files.length) { state.className='empty'; state.textContent='No uploads yet. Send a file to the bot first.'; return; }
+      list.innerHTML=data.files.map(f=>`<article class="card"><div class="row"><div class="name">${escapeHtml(f.name)}</div><span class="status ${f.live?'live':'dead'}">${f.live?'LIVE':'EXPIRED'}</span></div><div class="meta">${f.type} · ${fmtSize(f.size)} · Created ${escapeHtml(f.createdAt)}${f.expiresAt?' · Expires '+escapeHtml(f.expiresAt):''}</div>${f.live?`<a class="link" href="${encodeURI(f.url)}" target="_blank">${escapeHtml(f.url)}</a>`:''}</article>`).join('');
+    } catch(e) { state.className='error'; state.textContent=e.message; }
+  }
+  function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+  document.getElementById('refresh').onclick=load;
+  document.getElementById('upload').onclick=()=>tg?.showAlert('Send any file to the bot chat, then choose Temporary or Permanent.');
+  load();
+</script>
+</body></html>

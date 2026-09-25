@@ -28,6 +28,8 @@ const CATBOX_USERHASH = process.env.CATBOX_USERHASH || config.CATBOX_USERHASH ||
 const TIMEZONE = config.TIMEZONE || 'Asia/Kolkata';
 const ALLOWED_USERS = (config.ALLOWED_USERS || []).map(String);
 const PUBLIC_URL = `https://${String(config.DOMAIN).replace(/^https?:\/\//, '').replace(/\/+$/, '')}`;
+const MINI_APP_URL = `${PUBLIC_URL}/app`;
+const START_VIDEO_URL = `${PUBLIC_URL}/file/F565zkpM.mp4`;
 
 const API = `https://api.telegram.org/bot${TOKEN}`;
 const TG_DOWNLOAD_LIMIT = 20 * 1024 * 1024; // Telegram bots max 20 MB download kar sakte hain
@@ -61,7 +63,7 @@ async function createLink(doc) {
     db = await getDb();
   } catch (err) {
     console.error('MongoDB error:', err.message);
-    throw new Error('Database se connect nahi ho paya, link nahi ban saka');
+    throw new Error('Could not connect to the database, so the link was not created');
   }
   const ext = getExt(doc.fileName);
   for (let i = 0; i < 5; i++) {
@@ -73,10 +75,10 @@ async function createLink(doc) {
     } catch (err) {
       if (err.code === 11000) continue; // key already hai, nayi banao
       console.error('MongoDB insert error:', err.message);
-      throw new Error('Link save nahi ho paya, dobara try karo');
+      throw new Error('Could not save the link. Please try again');
     }
   }
-  throw new Error('Link nahi ban paya, dobara try karo');
+  throw new Error('Could not create the link. Please try again');
 }
 
 // DB fail ho to bhi bot na ruke (user save, history)
@@ -106,21 +108,21 @@ async function sendHistory(chatId, userId) {
   const list = await safeDb((db) =>
     db.collection('uploads').find({ userId }).sort({ createdAt: -1 }).limit(10).toArray()
   );
-  if (!list) return tg('sendMessage', { chat_id: chatId, text: `${E('warning')} History load nahi ho payi. Thodi der baad try karo.` });
-  if (list.length === 0) return tg('sendMessage', { chat_id: chatId, text: `${E('empty')} Abhi tak koi upload nahi hai.` });
+  if (!list) return tg('sendMessage', { chat_id: chatId, text: `${E('warning')} History is temporarily unavailable. Please try again later.` });
+  if (list.length === 0) return tg('sendMessage', { chat_id: chatId, text: `${E('empty')} You have no uploads yet.` });
 
   const now = Date.now();
   const lines = list.map((u, i) => {
     let status;
-    if (u.type === 'permanent') status = `${E('permanent')} Permanent`;
-    else if (u.expiresAt && new Date(u.expiresAt).getTime() < now) status = `${E('expired')} Expire ho gaya`;
-    else status = `${E('calendar')} Expire: ${formatDate(u.expiresAt)}`;
+    if (u.type === 'permanent') status = `${E('permanent')} Permanent • Live`;
+    else if (u.expiresAt && new Date(u.expiresAt).getTime() < now) status = `${E('expired')} Temporary • Expired`;
+    else status = `${E('calendar')} Temporary • Live until ${formatDate(u.expiresAt)}`;
     return `<b>${i + 1}. ${esc(u.fileName)}</b> (${formatSize(u.fileSize)})\n${status}\n${E('link')} ${esc(u.proxyUrl)}`;
   });
 
   return tg('sendMessage', {
     chat_id: chatId,
-    text: `${E('history')} <b>Aapke last ${list.length} uploads:</b>\n\n${lines.join('\n\n')}`,
+    text: `${E('history')} <b>Your last ${list.length} uploads:</b>\n\n${lines.join('\n\n')}`,
     disable_web_page_preview: true,
   });
 }
@@ -227,11 +229,19 @@ const uploadKeyboard = () => ({
   ],
 });
 
+const startKeyboard = () => ({
+  inline_keyboard: [
+    [{ text: 'Upload a file', web_app: { url: MINI_APP_URL } }],
+    [{ text: 'Open file manager', web_app: { url: MINI_APP_URL } }],
+    [{ text: 'View history', callback_data: 'history' }],
+  ],
+});
+
 // ---------- Download / Upload ----------
 async function downloadTelegramFile(fileId) {
   const file = await tg('getFile', { file_id: fileId });
   const res = await fetch(`https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`);
-  if (!res.ok) throw new Error(`Telegram se download fail (HTTP ${res.status})`);
+  if (!res.ok) throw new Error(`Telegram download failed (HTTP ${res.status})`);
   return Buffer.from(await res.arrayBuffer());
 }
 
@@ -247,10 +257,10 @@ async function uploadTemp(buffer, name, expire) {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new Error('Temporary server ne galat response diya');
+    throw new Error('The temporary upload service returned an invalid response');
   }
   const m = json && json.data && typeof json.data.url === 'string' && json.data.url.match(/tmpfiles\.org\/(.+)$/);
-  if (json.status !== 'success' || !m) throw new Error('Temporary upload fail ho gaya');
+  if (json.status !== 'success' || !m) throw new Error('Temporary upload failed');
   return m[1].replace(/^dl\//, '');
 }
 
@@ -270,12 +280,12 @@ async function uploadPermanent(buffer, name) {
   try {
     json = JSON.parse(text);
   } catch {
-    throw new Error('Permanent upload service ne galat response diya');
+    throw new Error('The permanent upload service returned an invalid response');
   }
   const url = json && json.status === true && json.data && json.data.file && json.data.file.url && json.data.file.url.full;
   if (!res.ok || typeof url !== 'string') {
     console.error('onlyfiles response:', text.slice(0, 200));
-    throw new Error(`Permanent upload fail ho gaya: ${(json.error && json.error.message) || 'OnlyFiles ne file accept nahi ki'}`);
+    throw new Error(`Permanent upload failed: ${(json.error && json.error.message) || 'OnlyFiles rejected the file'}`);
   }
   return url;
 }
@@ -290,35 +300,37 @@ async function handleMessage(msg) {
   if (msg.text && msg.text.startsWith('/history')) return sendHistory(chatId, msg.from.id);
 
   if (msg.text && msg.text.startsWith('/start')) {
-    return tg('sendMessage', {
-      chat_id: chatId,
-      text:
-        `${E('hello')} <b>Mujhe koi bhi file, photo, video, audio ya GIF bhejo</b>, main uska download link bana dunga.\n\n` +
-        `${E('wait')} <b>Temporary:</b> 60 min, 6h, 24h ya 48h baad delete\n` +
-        `${E('permanent')} <b>Permanent:</b> hamesha ke liye\n\n` +
-        `${E('history')} /history — aapke last 10 uploads\n\n` +
-        `${E('warning')} Max 20 MB file.\n` +
-        `${E('tip')} Photo ki original quality chahiye to "File" ke roop mein bhejo.`,
-    });
+    try {
+      return await tg('sendVideo', {
+        chat_id: chatId,
+        video: START_VIDEO_URL,
+        caption: '<b>Welcome to File Uploader Bot</b>\n\nUpload files, create temporary or permanent links, and manage all your links from the file manager.\n\nMaximum Telegram download size: 20 MB.',
+        reply_markup: startKeyboard(),
+      });
+    } catch (err) {
+      console.error('start video error:', err.message);
+      return tg('sendMessage', {
+        chat_id: chatId,
+        text: '<b>Welcome to File Uploader Bot</b>\n\nUse the buttons below to upload files or open your file manager.',
+        reply_markup: startKeyboard(),
+      });
+    }
   }
 
   const f = extractFile(msg);
-  if (!f) {
-    if (msg.text) await tg('sendMessage', { chat_id: chatId, text: `${E('attach')} Koi file, photo, video ya audio bhejo.` });
-    return;
-  }
+  if (!f) return; // Ignore unrelated text and unsupported messages silently.
 
   if (f.size && f.size > TG_DOWNLOAD_LIMIT) {
     return tg('sendMessage', {
       chat_id: chatId,
-      text: `${E('error')} Ye file ${formatSize(f.size)} ki hai. Max 20 MB tak ki file bhej sakte ho.`,
+      text: `${E('error')} This file is ${formatSize(f.size)}. The Telegram bot can download files up to 20 MB.`,
       reply_to_message_id: msg.message_id,
     });
   }
 
   await tg('sendMessage', {
     chat_id: chatId,
-    text: `${fileInfo(f)}\n\nKitne time ke liye upload karun?`,
+    text: `${fileInfo(f)}\n\nChoose how long this link should stay available:`,
     reply_to_message_id: msg.message_id,
     reply_markup: uploadKeyboard(),
   });
@@ -342,22 +354,26 @@ async function handleCallback(q) {
   const answer = (text, show_alert = false) =>
     tg('answerCallbackQuery', { callback_query_id: q.id, text, show_alert }).catch(() => {});
 
-  if (!isAllowed(q.from.id)) return answer('Aapko allow nahi kiya gaya hai.');
+  if (!isAllowed(q.from.id)) return answer('You are not allowed to use this bot.');
+  if (q.data === 'history') {
+    await answer();
+    return sendHistory(chatId, q.from.id);
+  }
 
   const item = extractFile(orig);
   if (!item) {
-    await answer('Original file nahi mili. File dobara bhejo.', true);
-    return edit(`${E('warning')} Original file nahi mili (shayad delete ho gayi). File dobara bhejo.`);
+    await answer('The original file was not found. Please send it again.', true);
+    return edit(`${E('warning')} The original file was not found. Please send it again.`);
   }
-  if (orig.from && orig.from.id !== q.from.id) return answer('Ye button tumhare liye nahi hai.');
+  if (orig.from && orig.from.id !== q.from.id) return answer('This button belongs to another user.');
 
   await answer();
   if (action !== 'e' && action !== 'p') return;
 
   try {
-    await edit(`${fileInfo(item)}\n\n${E('wait')} File le raha hoon...`); // buttons hat jaate hain, double upload nahi hoga
+    await edit(`${fileInfo(item)}\n\n${E('wait')} Downloading the file...`); // buttons hat jaate hain, double upload nahi hoga
     const buffer = await downloadTelegramFile(item.fileId);
-    await edit(`${fileInfo(item)}\n\n${E('auto')} Upload ho raha hai...`);
+    await edit(`${fileInfo(item)}\n\n${E('auto')} Uploading the file...`);
 
     if (action === 'e') {
       const sec = EXPIRE_OPTIONS.some(([, s]) => s === Number(extra)) ? Number(extra) : 3600;
@@ -374,7 +390,7 @@ async function handleCallback(q) {
       });
 
       await edit(
-        `${E('success')} <b>Upload ho gaya!</b>\n\n${fileInfo(item)}\n${uploaderInfo(q.from)}\n${E('calendar')} Delete hoga: ${formatDate(expiresAt)}\n\n${E('download')} <b>Download link:</b>\n${esc(proxyUrl)}`,
+        `${E('success')} <b>Upload complete.</b>\n\n${fileInfo(item)}\n${uploaderInfo(q.from)}\n${E('calendar')} Expires: ${formatDate(expiresAt)}\n\n${E('download')} <b>Download link:</b>\n${esc(proxyUrl)}`,
         { inline_keyboard: [[{ text: '⬇️ Download', url: proxyUrl }]] }
       );
     } else {
@@ -387,13 +403,13 @@ async function handleCallback(q) {
         origin: originPath,
       });
 
-      await edit(`${E('success')} <b>Permanent upload ho gaya!</b>\n\n${fileInfo(item)}\n${uploaderInfo(q.from)}\n${E('permanent')} Kabhi delete nahi hoga\n\n${E('download')} <b>Download link:</b>\n${esc(proxyUrl)}`, {
+      await edit(`${E('success')} <b>Permanent upload complete.</b>\n\n${fileInfo(item)}\n${uploaderInfo(q.from)}\n${E('permanent')} Stored permanently by the file host\n\n${E('download')} <b>Download link:</b>\n${esc(proxyUrl)}`, {
         inline_keyboard: [[{ text: '⬇️ Download', url: proxyUrl }]],
       });
     }
   } catch (err) {
     console.error('Upload error:', err);
-    await edit(`${E('error')} ${esc(err.message)}\n\nDobara try karo:`, uploadKeyboard());
+    await edit(`${E('error')} ${esc(err.message)}\n\nPlease try again:`, uploadKeyboard());
   }
 }
 

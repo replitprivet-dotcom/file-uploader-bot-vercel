@@ -1,0 +1,13 @@
+{
+  "name": "file-uploader-bot-vercel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Telegram bot on Vercel: temp upload to tmpfiles.org, permanent upload to catbox.moe",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@vercel/functions": "^1.5.0",
+    "mongodb": "^6.10.0"
+  }
+}

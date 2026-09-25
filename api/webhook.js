@@ -261,12 +261,22 @@ async function uploadPermanent(buffer, name) {
   if (CATBOX_USERHASH) form.append('userhash', CATBOX_USERHASH);
   form.append('fileToUpload', new Blob([buffer]), name);
 
-  const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: form });
+  // Catbox currently rejects requests without browser-like request headers
+  // with the response "Invalid uploader". This is not a file-type error.
+  const res = await fetch('https://catbox.moe/user/api.php', {
+    method: 'POST',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; FileUploaderBot/1.0)',
+      Referer: 'https://catbox.moe/',
+      Origin: 'https://catbox.moe',
+    },
+    body: form,
+  });
   const text = (await res.text()).trim();
   const m = text.match(/^https?:\/\/files\.catbox\.moe\/([A-Za-z0-9]+\.[A-Za-z0-9]+)$/);
   if (!res.ok || !m) {
     console.error('catbox response:', text.slice(0, 200));
-    throw new Error('Permanent upload fail ho gaya (ye file type allowed nahi ho sakta)');
+    throw new Error(`Permanent upload fail ho gaya: ${text.slice(0, 120) || 'Catbox ne response nahi diya'}`);
   }
   return m[1];
 }

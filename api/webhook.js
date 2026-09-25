@@ -4,7 +4,6 @@
 
 const { waitUntil } = require('@vercel/functions');
 const crypto = require('crypto');
-const { GridFSBucket } = require('mongodb');
 const { getDb } = require('../lib/db');
 
 const config = require('../config');
@@ -255,25 +254,29 @@ async function uploadTemp(buffer, name, expire) {
   return m[1].replace(/^dl\//, '');
 }
 
-// Store permanent files in MongoDB GridFS. Catbox's anonymous API is
-// currently unreliable from serverless/datacenter IPs, while GridFS keeps
-// the file under the same account and supports files larger than 16 MB.
+// GoFile is used for external permanent-file storage. Catbox's anonymous API
+// is currently unreliable from serverless/datacenter IPs.
 async function uploadPermanent(buffer, name) {
-  const db = await getDb();
-  const bucket = new GridFSBucket(db, { bucketName: 'permanent_files' });
-  const contentType = String(name).toLowerCase().endsWith('.jpg') || String(name).toLowerCase().endsWith('.jpeg')
-    ? 'image/jpeg'
-    : String(name).toLowerCase().endsWith('.png')
-      ? 'image/png'
-      : 'application/octet-stream';
-  return new Promise((resolve, reject) => {
-    const stream = bucket.openUploadStream(name || 'file', {
-      metadata: { contentType, originalName: name || 'file' },
-    });
-    stream.on('error', reject);
-    stream.on('finish', () => resolve(`db:${stream.id.toString()}`));
-    stream.end(buffer);
+  const form = new FormData();
+  form.append('file', new Blob([buffer]), name || 'file');
+  const res = await fetch('https://upload.gofile.io/uploadfile', {
+    method: 'POST',
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FileUploaderBot/1.0)' },
+    body: form,
   });
+  const text = (await res.text()).trim();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('Permanent upload service ne galat response diya');
+  }
+  const url = json && json.status === 'ok' && json.data && json.data.downloadPage;
+  if (!res.ok || typeof url !== 'string') {
+    console.error('gofile response:', text.slice(0, 200));
+    throw new Error(`Permanent upload fail ho gaya: ${json.message || 'External host ne file accept nahi ki'}`);
+  }
+  return url;
 }
 
 // ---------- Handlers ----------

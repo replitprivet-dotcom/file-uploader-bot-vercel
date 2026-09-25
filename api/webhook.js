@@ -404,7 +404,7 @@ async function handleUpdate(update) {
 
 // ---------- Vercel entry ----------
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') return res.status(200).send('🤖 Bot chal raha hai.');
+  if (req.method !== 'POST') return res.status(404).end();
   if (!TOKEN) return res.status(500).send('BOT_TOKEN missing');
   if (req.headers['x-telegram-bot-api-secret-token'] !== WEBHOOK_SECRET) {
     return res.status(401).send('unauthorized');

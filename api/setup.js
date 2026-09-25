@@ -32,6 +32,9 @@ function html(res, status, icon, title, lines) {
 }
 
 module.exports = async (req, res) => {
+  // This endpoint is for the scheduled Vercel cron only; do not expose bot
+  // status, username, or Telegram configuration to public visitors.
+  if (req.headers['x-vercel-cron'] !== '1') return res.status(404).end();
   if (!TOKEN || TOKEN.startsWith('YAHAN_')) {
     return html(res, 500, '⚠️', 'Setup adhoora hai', ['config.js mein BOT_TOKEN daalo aur redeploy karo.']);
   }

@@ -64,6 +64,7 @@ module.exports = async (req, res) => {
       commands: [
         { command: 'start', description: 'Bot shuru karo' },
         { command: 'history', description: 'Aapke last 10 uploads' },
+        { command: 'row', description: 'Create a temporary text row' },
       ],
     });
 

@@ -4,7 +4,8 @@
   },
   "rewrites": [
     { "source": "/", "destination": "/api/not-found" },
-    { "source": "/app", "destination": "/app.html" }
+    { "source": "/app", "destination": "/app.html" },
+    { "source": "/row/:key", "destination": "/api/row-view?key=:key" }
   ],
   "crons": [
     { "path": "/api/setup", "schedule": "0 0 * * *" }

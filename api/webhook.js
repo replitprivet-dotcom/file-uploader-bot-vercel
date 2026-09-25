@@ -233,6 +233,7 @@ const startKeyboard = () => ({
   inline_keyboard: [
     [{ text: 'Upload a file', web_app: { url: MINI_APP_URL } }],
     [{ text: 'Open file manager', web_app: { url: MINI_APP_URL } }],
+    [{ text: 'Create 1-row paste', web_app: { url: `${MINI_APP_URL}?row=1` } }, { text: 'Create 2-row paste', web_app: { url: `${MINI_APP_URL}?row=2` } }],
     [{ text: 'View history', callback_data: 'history' }],
   ],
 });
@@ -298,6 +299,16 @@ async function handleMessage(msg) {
   await saveUser(msg.from);
 
   if (msg.text && msg.text.startsWith('/history')) return sendHistory(chatId, msg.from.id);
+
+  const rowMatch = msg.text && msg.text.match(/^\/row\s+([12])(?:@\w+)?$/i);
+  if (rowMatch) {
+    const count = Number(rowMatch[1]);
+    return tg('sendMessage', {
+      chat_id: chatId,
+      text: `<b>Create ${count} row${count > 1 ? 's' : ''}</b>\n\nThe Mini App will expire after 2 minutes.`,
+      reply_markup: { inline_keyboard: [[{ text: `Open ${count}-row editor`, web_app: { url: `${MINI_APP_URL}?row=${count}` } }]] },
+    });
+  }
 
   if (msg.text && msg.text.startsWith('/start')) {
     try {

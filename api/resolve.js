@@ -21,6 +21,14 @@ async function freshTempLink(pageUrl) {
   return null;
 }
 
+async function freshOnlyFilesLink(pageUrl) {
+  const res = await fetch(pageUrl, { headers: { 'User-Agent': UA } });
+  if (!res.ok) return null;
+  const html = await res.text();
+  const abs = html.match(/https?:\/\/onlyfiles\.com\/dl\/[^"'\s<>]+/i);
+  return abs ? abs[0].replace(/&amp;/g, '&').replace(/^http:/, 'https:') : null;
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (!SECRET || req.headers['x-proxy-secret'] !== SECRET) {
@@ -39,11 +47,9 @@ module.exports = async (req, res) => {
     if (!doc || !doc.origin) return res.status(200).json({ status: 404 });
 
     if (doc.type === 'permanent') {
-      if (String(doc.origin).startsWith('db:')) {
-        return res.status(200).json({
-          status: 200,
-          target: `${PUBLIC_URL}/api/download?id=${encodeURIComponent(String(doc.origin).slice(3))}`,
-        });
+      if (/^https?:\/\/onlyfiles\.com\//i.test(String(doc.origin))) {
+        const link = await freshOnlyFilesLink(doc.origin);
+        return res.status(200).json(link ? { status: 200, target: link } : { status: 410 });
       }
       return res.status(200).json({ status: 200, target: doc.origin });
     }

@@ -254,9 +254,38 @@ async function uploadTemp(buffer, name, expire) {
   return m[1].replace(/^dl\//, '');
 }
 
-// GoFile is used for external permanent-file storage. Catbox's anonymous API
-// is currently unreliable from serverless/datacenter IPs.
+const IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tif', 'tiff', 'avif']);
+
+async function uploadImageExternal(buffer, name) {
+  const form = new FormData();
+  form.append('file', new Blob([buffer]), name || 'image');
+  const res = await fetch('https://imglink.cc/api/upload', {
+    method: 'POST',
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; FileUploaderBot/1.0)' },
+    body: form,
+  });
+  const text = (await res.text()).trim();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error('ImgLink ne galat response diya');
+  }
+  const url = json && json.images && json.images[0] && json.images[0].url;
+  if (!res.ok || typeof url !== 'string') {
+    console.error('imglink response:', text.slice(0, 200));
+    throw new Error('Image upload fail ho gaya');
+  }
+  return url;
+}
+
+// ImgLink is used for images; GoFile handles videos, audio, archives and
+// other files that ImgLink does not support. Catbox's anonymous API is
+// currently unreliable from serverless/datacenter IPs.
 async function uploadPermanent(buffer, name) {
+  const ext = getExt(name);
+  if (IMAGE_EXTENSIONS.has(ext)) return uploadImageExternal(buffer, name);
+
   const form = new FormData();
   form.append('file', new Blob([buffer]), name || 'file');
   const res = await fetch('https://upload.gofile.io/uploadfile', {
